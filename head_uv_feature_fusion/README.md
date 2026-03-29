@@ -1,64 +1,91 @@
-# Head UV Feature Unprojection (按论文图示流程)
+# Head UV Feature Fusion (DINO + Mesh + Transformer)
 
-已按你的确认继续升级：
-- ✅ 图像空间可见性改为**逐像素 z-buffer**（不是面平均深度）
-- ✅ 增加**可插拔 rasterizer 接口**，默认 `cpu`，并预留 `nvdiffrast/pytorch3d` 对接点
+这个项目是一个**可运行的最小原型**，用于把你描述的人头图像信息串起来：
 
----
+1. 输入视频分帧得到的人头图像。
+2. 提取 DINO 特征图 `F_img ∈ R[H,W,C]`。
+3. 读取/构建头部 mesh 顶点 `V ∈ R[N,3]`，并用 FLAME/VHAP 提供的参数进行位姿与相机投影。
+4. 利用 UV 展开（vertex-to-uv 对应）把 3D 信息映射到 UV 平面。
+5. 通过 Transformer 融合图像 token 和 mesh token，输出 UV 特征图 `F_uv ∈ R[H_uv,W_uv,C]`。
 
-## Pipeline（对应图示）
-
-1. `I_i -> DINOv2` 提取 `F_dino^i ∈ R^{H×W×D}`。
-2. **Image-space visibility pass**（粗 FLAME mesh + z-buffer）得到 `F_vis^i`。
-3. **UV-space rasterization pass**（仅 rasterize 可见面）得到：
-   - `UV_visible^i(u,v)`
-   - `R_coord^i`（face id + barycentric）
-4. barycentric 恢复 `x(u,v)`（UV texel 对应 3D 点）。
-5. 投影 `p(u,v)=π(x(u,v),K,R,t)`。
-6. 双线性采样 `F_dino^i(p(u,v))`。
-7. `UV_feat^i(u,v)=UV_visible^i(u,v) * F_dino^i(p(u,v))`。
-8. （可选）`UV_feat + UV_position` 输入编码器得到 `UV_feat_encoded`。
+> 你在问题中提到的 `[H,W,N]` 这里建议把最后一个维度当作**通道维 C**（feature dimension）而不是顶点数 N。顶点数通常用于 mesh token 数量，特征通道建议单独记为 C。
 
 ---
 
-## 核心模块
+## 项目结构
 
-- `rasterizer.py`
-  - `BaseRasterizer`：后端抽象
-  - `CPURasterizer`：当前可运行版本（逐像素 barycentric + depth z-buffer）
-  - `DifferentiableRasterizer`：预留 `nvdiffrast/pytorch3d` 对接入口
-- `geometry.py`
-  - `visible_faces_from_image_space(..., rasterizer=...)`
-  - `rasterize_uv_to_image_space(..., rasterizer=...)`
-  - `uv_to_surface_points`
-  - `project_points` / `sample_feature_map_bilinear`
-- `pipeline.py`
-  - `UVFeatureUnprojectionPipeline(..., rasterizer_backend="cpu")`
+```text
+head_uv_feature_fusion/
+├── configs/
+│   └── default.yaml          # 参数示例
+├── scripts/
+│   └── run_demo.py           # 合成数据 demo（可直接运行）
+├── src/head_uv_feature_fusion/
+│   ├── data_types.py         # 数据结构定义
+│   ├── geometry.py           # 相机投影 / UV 栅格化辅助
+│   ├── model.py              # Transformer 融合模型
+│   ├── pipeline.py           # 端到端流程封装
+│   └── __init__.py
+└── README.md
+```
 
 ---
 
-## 运行 demo
+## 快速开始
 
 ```bash
 cd head_uv_feature_fusion
 python scripts/run_demo.py
 ```
 
-默认使用：
-- `rasterizer_backend: cpu`
+输出示例：
+- 输入：`image_feature_map shape = (64, 64, 128)`
+- 输出：`uv_feature_map shape = (128, 128, 128)`
 
 ---
 
-## 接入 VHAP/FLAME 建议
+## 关键思路解释
 
-你已有的 `flame + uvmask + 相机内外参` 可以直接接：
+### 1) 你说的“mesh 和 UV 对应”具体是什么
 
-- `mesh.vertices` <- 当前帧 FLAME 顶点
-- `mesh.faces` <- FLAME 拓扑
-- `mesh.uv_coords` <- 顶点 UV
-- `camera.K/R/t/image_size` <- 相机参数
-- `uv_mask` <- VHAP 的 UV mask（可选）
+- 每个 mesh 顶点 `v_i` 对应一个 UV 坐标 `uv_i=(u_i,v_i)`（来自 FLAME 模型或贴图参数）。
+- 三角面片在 3D 空间与 UV 空间是同拓扑（同一组三角形索引）。
+- 所以可以把任意顶点特征插值到 UV 网格上，得到 `F_uv`。
 
-如果你要上训练并反传梯度：
-1. 在 `DifferentiableRasterizer.rasterize()` 中接入 nvdiffrast/PyTorch3D 输出 `face_map/bary_map/depth_map`。
-2. 保持 `pipeline.py` 其余逻辑不变（可直接复用）。
+### 2) 为什么要有相机内外参
+
+VHAP/跟踪器给出：
+- 外参：`R, t`（头部/世界到相机）
+- 内参：`K`（焦距、主点）
+
+用它们可把 3D 顶点投影到图像平面，建立：
+- 顶点 ↔ 图像特征采样点
+- 顶点 ↔ UV 位置
+
+从而实现“图像特征注入 UV”。
+
+### 3) Transformer 融合做了什么
+
+- 图像特征图展开为 image tokens。
+- mesh 顶点特征构成 mesh tokens。
+- 使用 cross-attention，让 mesh token 从 image token 读取上下文。
+- 再把增强后的 mesh token 栅格化到 UV 平面。
+
+这能比“纯几何最近邻拷贝”更稳健地融合视角、光照、遮挡信息。
+
+### 4) 与 FLAME / VHAP 真实接入
+
+本 demo 用的是合成数据接口，真实接入时：
+1. 替换 `PipelineInput` 中的 `vertices, uv_coords, faces, K,R,t` 为 VHAP 导出。
+2. DINO 特征替换为真实提取结果。
+3. 若有 `uv_mask`，在 UV 栅格化后做 mask。
+4. 多帧情况下做时序聚合（EMA / temporal transformer）。
+
+---
+
+## 下一步建议（可继续扩展）
+
+- 接入真实 VHAP 文件解析器（json / npz）。
+- 加入可见性判断（z-buffer）避免背面污染。
+- 用可微 rasterizer（如 PyTorch3D/nvdiffrast）替换当前简化版插值。
+- 训练目标可用：重建损失 + 感知损失 + 跨帧一致性损失。

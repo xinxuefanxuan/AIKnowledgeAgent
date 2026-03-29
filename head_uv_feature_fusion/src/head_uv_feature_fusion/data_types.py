@@ -10,13 +10,11 @@ class CameraParams:
     K: (3,3)
     R: (3,3)
     t: (3,)
-    image_size: (H_img, W_img)
     """
 
     K: np.ndarray
     R: np.ndarray
     t: np.ndarray
-    image_size: tuple[int, int]
 
 
 @dataclass
@@ -35,14 +33,12 @@ class MeshData:
 
 @dataclass
 class PipelineInput:
-    """Single-frame inputs for UV feature unprojection.
+    """Single-frame inputs for UV feature fusion.
 
     image_features: (H,W,C) from DINO/backbone.
-    uv_mask: optional (H_uv,W_uv) bool, usually from VHAP.
     """
 
     image_features: np.ndarray
     mesh: MeshData
     camera: CameraParams
     uv_size: tuple[int, int] = (128, 128)
-    uv_mask: np.ndarray | None = None

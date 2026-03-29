@@ -1,13 +1,9 @@
 from .data_types import CameraParams, MeshData, PipelineInput
-from .pipeline import UVFeatureUnprojectionPipeline
-from .rasterizer import BaseRasterizer, CPURasterizer, DifferentiableRasterizer
+from .pipeline import UVFeatureFusionPipeline
 
 __all__ = [
     "CameraParams",
     "MeshData",
     "PipelineInput",
-    "UVFeatureUnprojectionPipeline",
-    "BaseRasterizer",
-    "CPURasterizer",
-    "DifferentiableRasterizer",
+    "UVFeatureFusionPipeline",
 ]

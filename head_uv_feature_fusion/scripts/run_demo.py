@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from head_uv_feature_fusion import CameraParams, MeshData, PipelineInput, UVFeatureUnprojectionPipeline
+from head_uv_feature_fusion import CameraParams, MeshData, PipelineInput, UVFeatureFusionPipeline
 
 
 def make_dummy_data(
@@ -38,7 +38,7 @@ def make_dummy_data(
     R = np.eye(3, dtype=np.float32)
     t = np.array([0, 0, 0], dtype=np.float32)
 
-    camera = CameraParams(K=K, R=R, t=t, image_size=(image_h, image_w))
+    camera = CameraParams(K=K, R=R, t=t)
     mesh = MeshData(vertices=vertices, faces=faces, uv_coords=uv_coords)
     return PipelineInput(
         image_features=image_features,
@@ -50,17 +50,12 @@ def make_dummy_data(
 
 def main() -> None:
     data = make_dummy_data()
-    pipeline = UVFeatureUnprojectionPipeline(
-        feature_dim=data.image_features.shape[-1],
-        rasterizer_backend="cpu",
-    )
-    outputs = pipeline.run(data)
+    pipeline = UVFeatureFusionPipeline(feature_dim=data.image_features.shape[-1])
+    uv_feature_map = pipeline.run(data)
 
     print("image_feature_map shape:", data.image_features.shape)
-    print("uv_feat shape:", outputs["uv_feat"].shape)
-    print("uv_feat_encoded shape:", outputs["uv_feat_encoded"].shape)
-    print("uv_visible ratio:", float(outputs["uv_visible"].mean()))
-    print("num visible faces:", int(outputs["visible_face_ids"].shape[0]))
+    print("uv_feature_map shape:", uv_feature_map.shape)
+    print("uv_feature_map mean/std:", float(uv_feature_map.mean()), float(uv_feature_map.std()))
 
 
 if __name__ == "__main__":
