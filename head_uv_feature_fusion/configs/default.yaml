@@ -6,5 +6,3 @@ image_w: 64
 uv_h: 128
 uv_w: 128
 num_vertices: 5023
-pipeline: uv_feature_unprojection
-rasterizer_backend: cpu
