@@ -6,6 +6,7 @@ import numpy as np
 
 from head_uv_feature_fusion import (
     CameraParams,
+    build_feature_extractor,
     MeshData,
     PipelineInput,
     UVFeatureUnprojectionPipeline,
@@ -19,12 +20,11 @@ def make_dummy_data(
     image_w: int = 32,
     uv_h: int = 32,
     uv_w: int = 32,
-    c: int = 16,
     n_vertices: int = 100,
 ) -> PipelineInput:
     rng = np.random.default_rng(123)
 
-    image_features = rng.normal(size=(image_h, image_w, c)).astype(np.float32)
+    image_rgb = rng.uniform(0, 255, size=(image_h, image_w, 3)).astype(np.float32)
     vertices = rng.normal(size=(n_vertices, 3)).astype(np.float32)
     vertices[:, 2] += 4.0
 
@@ -38,7 +38,7 @@ def make_dummy_data(
     ).astype(np.int32)
     uv_coords = rng.uniform(0, 1, size=(n_vertices, 2)).astype(np.float32)
 
-    fx = fy = 80.0
+    fx = fy = 30.0
     cx = image_w / 2.0
     cy = image_h / 2.0
     K = np.array([[fx, 0, cx], [0, fy, cy], [0, 0, 1]], dtype=np.float32)
@@ -46,7 +46,7 @@ def make_dummy_data(
     t = np.array([0, 0, 0], dtype=np.float32)
 
     return PipelineInput(
-        image_features=image_features,
+        image_rgb=image_rgb,
         mesh=MeshData(vertices=vertices, faces=faces, uv_coords=uv_coords),
         camera=CameraParams(K=K, R=R, t=t, image_size=(image_h, image_w)),
         uv_size=(uv_h, uv_w),
@@ -58,10 +58,15 @@ def main() -> None:
     out_dir.mkdir(parents=True, exist_ok=True)
 
     data = make_dummy_data()
-    pipe = UVFeatureUnprojectionPipeline(feature_dim=data.image_features.shape[-1], rasterizer_backend="cpu")
+    extractor = build_feature_extractor("dummy", out_dim=32)
+    pipe = UVFeatureUnprojectionPipeline(
+        feature_dim=32,
+        rasterizer_backend="cpu",
+        feature_extractor=extractor,
+    )
     out = pipe.run(data)
 
-    save_feature_rgb(str(out_dir / "F_dino_rgb.ppm"), data.image_features, channels=(0, 1, 2))
+    save_feature_rgb(str(out_dir / "F_dino_rgb.ppm"), out["F_dino"], channels=(0, 1, 2))
     save_gray(str(out_dir / "UV_visible.ppm"), out["UV_visible"])
     save_feature_rgb(str(out_dir / "UV_feat_rgb.ppm"), out["UV_feat"], channels=(0, 1, 2))
     save_feature_rgb(str(out_dir / "R_feat_rgb.ppm"), out["R_feat"], channels=(0, 1, 2))
@@ -70,6 +75,7 @@ def main() -> None:
     np.save(out_dir / "R_UV_bary.npy", out["R_UV_bary"])
     np.save(out_dir / "UV_position.npy", out["UV_position"])
     np.save(out_dir / "UV_proj_2d.npy", out["UV_proj_2d"])
+    np.save(out_dir / "UV_proj_grid.npy", out["UV_proj_grid"])
 
     print(f"saved debug artifacts to: {out_dir.resolve()}")
 

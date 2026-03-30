@@ -5,35 +5,47 @@ import torch
 import torch.nn as nn
 
 
-class MeshImageFusionTransformer(nn.Module):
-    """Fuse mesh tokens with image tokens using cross-attention.
+class UVFeatureEncoder(nn.Module):
+    """Encode UV unprojected features with 3D position priors.
 
     Input:
-      image_features: (H,W,C)
-      vertex_features: (N,C)
+      uv_features: (H_uv,W_uv,C)
+      uv_positions_3d: (H_uv,W_uv,3)
+      uv_visible: (H_uv,W_uv) bool
     Output:
-      fused_vertex_features: (N,C)
+      encoded_uv_features: (H_uv,W_uv,C)
     """
 
     def __init__(self, feature_dim: int = 128, num_heads: int = 8, num_layers: int = 2):
         super().__init__()
-        decoder_layer = nn.TransformerDecoderLayer(
+        self.in_proj = nn.Linear(feature_dim + 3, feature_dim)
+        enc_layer = nn.TransformerEncoderLayer(
             d_model=feature_dim,
             nhead=num_heads,
             dim_feedforward=feature_dim * 4,
             batch_first=True,
         )
-        self.decoder = nn.TransformerDecoder(decoder_layer, num_layers=num_layers)
+        self.encoder = nn.TransformerEncoder(enc_layer, num_layers=num_layers)
         self.norm = nn.LayerNorm(feature_dim)
 
-    def forward(self, image_features: np.ndarray, vertex_features: np.ndarray) -> np.ndarray:
-        img = torch.from_numpy(image_features).float().unsqueeze(0)  # (1,H,W,C)
-        vtx = torch.from_numpy(vertex_features).float().unsqueeze(0)  # (1,N,C)
+    def forward(
+        self,
+        uv_features: np.ndarray,
+        uv_positions_3d: np.ndarray,
+        uv_visible: np.ndarray,
+    ) -> np.ndarray:
+        h, w, c = uv_features.shape
+        uv_feat_t = torch.from_numpy(uv_features).float()
+        uv_pos_t = torch.from_numpy(uv_positions_3d).float()
+        visible = torch.from_numpy(uv_visible.astype(np.bool_)).view(1, h * w)
 
-        b, h, w, c = img.shape
-        memory = img.view(b, h * w, c)
-        tgt = vtx
+        tokens = torch.cat([uv_feat_t, uv_pos_t], dim=-1).view(1, h * w, c + 3)
+        tokens = self.in_proj(tokens)
 
-        fused = self.decoder(tgt=tgt, memory=memory)
-        fused = self.norm(fused)
-        return fused.squeeze(0).detach().cpu().numpy()
+        # True means "masked" in transformer key_padding_mask.
+        key_padding_mask = ~visible
+        out = self.encoder(tokens, src_key_padding_mask=key_padding_mask)
+        out = self.norm(out).view(h, w, c)
+
+        out = out * torch.from_numpy(uv_visible.astype(np.float32))[..., None]
+        return out.detach().cpu().numpy()

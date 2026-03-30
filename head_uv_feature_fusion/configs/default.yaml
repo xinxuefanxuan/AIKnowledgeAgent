@@ -1,8 +1,11 @@
-feature_dim: 128
+feature_dim: 64
 num_heads: 8
 num_layers: 2
-image_h: 64
-image_w: 64
-uv_h: 128
-uv_w: 128
-num_vertices: 5023
+image_h: 48
+image_w: 48
+uv_h: 48
+uv_w: 48
+num_vertices: 160
+pipeline: uv_feature_unprojection
+rasterizer_backend: cpu
+extractor: dummy_dino
